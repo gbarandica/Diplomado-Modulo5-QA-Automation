@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Detalle de producto — Tienda QA</title>
+  <link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+  <header>
+    <a href="index.html" class="logo" data-testid="logo">🛒 Tienda QA</a>
+    <nav>
+      <a href="index.html" data-testid="nav-catalogo">Catalogo</a>
+      <a href="carrito.html" class="carrito-link" data-testid="nav-carrito">
+        Carrito <span class="carrito-contador" data-testid="carrito-contador">0</span>
+      </a>
+    </nav>
+  </header>
+
+  <main>
+    <p><a href="index.html" data-testid="volver">&larr; Volver al catalogo</a></p>
+    <div id="detalle" data-testid="detalle-producto">
+      <div class="cargando" data-testid="cargando">Cargando producto...</div>
+    </div>
+  </main>
+
+  <footer>Certificacion 5 — QA Cloud-Native · App de laboratorio</footer>
+
+  <script src="app.js"></script>
+  <script>
+    const contenedor = document.querySelector('[data-testid="detalle-producto"]');
+    const params = new URLSearchParams(location.search);
+    const id = params.get('id');
+
+    async function cargarProducto() {
+      if (!id) {
+        contenedor.innerHTML = '<div class="mensaje mensaje-error" data-testid="error">Falta el id del producto.</div>';
+        return;
+      }
+      try {
+        const res = await fetch('/api/productos/' + id);
+        if (res.status === 404) {
+          contenedor.innerHTML = '<div class="mensaje mensaje-error" data-testid="no-encontrado">Producto no encontrado.</div>';
+          return;
+        }
+        const p = await res.json();
+        pintarDetalle(p);
+      } catch (e) {
+        contenedor.innerHTML = '<div class="mensaje mensaje-error" data-testid="error">No se pudo cargar el producto.</div>';
+      }
+    }
+
+    function pintarDetalle(p) {
+      const agotado = !p.activo || p.stock === 0;
+      contenedor.innerHTML = `
+        <div class="detalle">
+          <div class="imagen cat-${p.categoria}">${p.categoria}</div>
+          <div class="info">
+            <h1 data-testid="detalle-nombre">${p.nombre}</h1>
+            <div class="categoria">${p.categoria}</div>
+            <p class="descripcion" data-testid="detalle-descripcion">${p.descripcion || ''}</p>
+            <div class="precio-grande" data-testid="detalle-precio">$${p.precio.toFixed(2)}</div>
+            <div class="stock" data-testid="detalle-stock">
+              ${agotado ? 'Sin stock disponible' : 'Stock disponible: ' + p.stock}
+            </div>
+            <div class="compra">
+              <input type="number" id="cantidad" data-testid="input-cantidad" value="1" min="1" max="${p.stock}" ${agotado ? 'disabled' : ''}>
+              <button class="btn" id="agregar" data-testid="btn-agregar" ${agotado ? 'disabled' : ''}>
+                Agregar al carrito
+              </button>
+            </div>
+            <div id="mensaje"></div>
+          </div>
+        </div>`;
+
+      if (!agotado) {
+        document.querySelector('[data-testid="btn-agregar"]').addEventListener('click', () => {
+          const cantidad = Number(document.querySelector('[data-testid="input-cantidad"]').value) || 1;
+          agregarAlCarrito(p, cantidad);
+          document.getElementById('mensaje').innerHTML =
+            '<div class="mensaje mensaje-ok" data-testid="mensaje-agregado">Agregado al carrito: ' + cantidad + ' x ' + p.nombre + '</div>';
+        });
+      }
+    }
+
+    actualizarContadorCarrito();
+    cargarProducto();
+  </script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+{
+  "name": "app-tienda",
+  "version": "1.0.0",
+  "description": "Aplicacion base (front + API) para los ejercicios de la Certificacion 5 - QA Cloud-Native",
+  "type": "module",
+  "main": "servidor/server.js",
+  "scripts": {
+    "generar": "node datos/generar-datos.js",
+    "start": "node servidor/server.js",
+    "dev": "node --watch servidor/server.js",
+    "postinstall": "node datos/generar-datos.js"
+  },
+  "keywords": ["qa", "cloud-native", "tienda", "e2e", "api"],
+  "author": "Lite Thinking University of Technology",
+  "license": "MIT",
+  "dependencies": {
+    "@faker-js/faker": "^10.6.0",
+    "express": "^4.19.2"
+  }
+}

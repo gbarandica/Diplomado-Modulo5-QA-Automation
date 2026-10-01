@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tienda QA Cloud-Native</title>
+  <link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+  <header>
+    <a href="index.html" class="logo" data-testid="logo">🛒 Tienda QA</a>
+    <nav>
+      <a href="index.html" data-testid="nav-catalogo">Catalogo</a>
+      <a href="carrito.html" class="carrito-link" data-testid="nav-carrito">
+        Carrito <span class="carrito-contador" data-testid="carrito-contador">0</span>
+      </a>
+    </nav>
+  </header>
+
+  <main>
+    <h1 data-testid="titulo-catalogo">Catalogo de productos</h1>
+    <p class="subtitulo">Explora los productos disponibles en la tienda.</p>
+
+    <div class="filtros">
+      <input type="text" id="buscar" data-testid="input-buscar" placeholder="Buscar por nombre...">
+      <select id="categoria" data-testid="select-categoria">
+        <option value="">Todas las categorias</option>
+        <option value="electronica">Electronica</option>
+        <option value="muebles">Muebles</option>
+        <option value="hogar">Hogar</option>
+        <option value="ropa">Ropa</option>
+        <option value="deportes">Deportes</option>
+      </select>
+    </div>
+
+    <div id="lista-productos" class="grid" data-testid="lista-productos">
+      <div class="cargando" data-testid="cargando">Cargando productos...</div>
+    </div>
+  </main>
+
+  <footer>Certificacion 5 — QA Cloud-Native · App de laboratorio</footer>
+
+  <script src="app.js"></script>
+  <script>
+    const contenedor = document.querySelector('[data-testid="lista-productos"]');
+    const inputBuscar = document.querySelector('[data-testid="input-buscar"]');
+    const selectCategoria = document.querySelector('[data-testid="select-categoria"]');
+
+    function tarjetaProducto(p) {
+      const agotado = !p.activo || p.stock === 0;
+      return `
+        <div class="card" data-testid="producto-card" data-producto-id="${p.id}">
+          <div class="imagen cat-${p.categoria}">${p.categoria}</div>
+          <div class="cuerpo">
+            <div class="nombre" data-testid="producto-nombre">${p.nombre}</div>
+            <div class="categoria">${p.categoria}</div>
+            <div class="precio" data-testid="producto-precio">$${p.precio.toFixed(2)}</div>
+            ${agotado ? '<div class="agotado" data-testid="producto-agotado">Agotado</div>' : ''}
+            <a class="btn" style="margin-top:12px;" data-testid="ver-detalle"
+               href="producto.html?id=${p.id}">Ver detalle</a>
+          </div>
+        </div>`;
+    }
+
+    async function cargarProductos() {
+      const q = inputBuscar.value.trim();
+      const categoria = selectCategoria.value;
+      const params = new URLSearchParams();
+      if (q) params.set('q', q);
+      if (categoria) params.set('categoria', categoria);
+
+      contenedor.innerHTML = '<div class="cargando" data-testid="cargando">Cargando...</div>';
+      try {
+        const res = await fetch('/api/productos?' + params.toString());
+        const productos = await res.json();
+        if (productos.length === 0) {
+          contenedor.innerHTML = '<div class="cargando" data-testid="sin-resultados">No hay productos que coincidan.</div>';
+          return;
+        }
+        contenedor.innerHTML = productos.map(tarjetaProducto).join('');
+      } catch (e) {
+        contenedor.innerHTML = '<div class="mensaje mensaje-error" data-testid="error">No se pudo cargar el catalogo.</div>';
+      }
+    }
+
+    inputBuscar.addEventListener('input', debounce(cargarProductos, 300));
+    selectCategoria.addEventListener('change', cargarProductos);
+    actualizarContadorCarrito();
+    cargarProductos();
+  </script>
+</body>
+</html>

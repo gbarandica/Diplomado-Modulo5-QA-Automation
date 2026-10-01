@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Carrito — Tienda QA</title>
+  <link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+  <header>
+    <a href="index.html" class="logo" data-testid="logo">🛒 Tienda QA</a>
+    <nav>
+      <a href="index.html" data-testid="nav-catalogo">Catalogo</a>
+      <a href="carrito.html" class="carrito-link" data-testid="nav-carrito">
+        Carrito <span class="carrito-contador" data-testid="carrito-contador">0</span>
+      </a>
+    </nav>
+  </header>
+
+  <main>
+    <h1 data-testid="titulo-carrito">Tu carrito</h1>
+    <p class="subtitulo">Revisa los productos antes de confirmar el pedido.</p>
+
+    <div id="contenido-carrito" data-testid="contenido-carrito">
+      <div class="cargando">Cargando carrito...</div>
+    </div>
+
+    <div id="mensaje-pedido"></div>
+  </main>
+
+  <footer>Certificacion 5 — QA Cloud-Native · App de laboratorio</footer>
+
+  <script src="app.js"></script>
+  <script>
+    const contenedor = document.querySelector('[data-testid="contenido-carrito"]');
+
+    function pintarCarrito() {
+      const items = leerCarrito();
+      if (items.length === 0) {
+        contenedor.innerHTML = `
+          <div class="carrito-vacio" data-testid="carrito-vacio">
+            <p>Tu carrito esta vacio.</p>
+            <p style="margin-top:12px;">
+              <a class="btn" href="index.html" data-testid="ir-catalogo">Ir al catalogo</a>
+            </p>
+          </div>`;
+        return;
+      }
+
+      const filas = items.map(i => `
+        <tr data-testid="fila-carrito" data-producto-id="${i.id}">
+          <td data-testid="fila-nombre">${i.nombre}</td>
+          <td data-testid="fila-cantidad">${i.cantidad}</td>
+          <td>$${i.precio.toFixed(2)}</td>
+          <td data-testid="fila-subtotal">$${(i.precio * i.cantidad).toFixed(2)}</td>
+          <td><button class="btn btn-secundario" data-testid="btn-quitar" data-id="${i.id}">Quitar</button></td>
+        </tr>`).join('');
+
+      contenedor.innerHTML = `
+        <table class="tabla-carrito">
+          <thead>
+            <tr><th>Producto</th><th>Cantidad</th><th>Precio</th><th>Subtotal</th><th></th></tr>
+          </thead>
+          <tbody>
+            ${filas}
+            <tr class="total-fila">
+              <td colspan="3">Total</td>
+              <td data-testid="carrito-total">$${totalCarrito().toFixed(2)}</td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+        <div style="margin-top:18px; display:flex; gap:10px;">
+          <button class="btn btn-secundario" data-testid="btn-vaciar">Vaciar carrito</button>
+          <button class="btn" data-testid="btn-confirmar">Confirmar pedido</button>
+        </div>`;
+
+      contenedor.querySelectorAll('[data-testid="btn-quitar"]').forEach(btn => {
+        btn.addEventListener('click', () => { quitarDelCarrito(Number(btn.dataset.id)); pintarCarrito(); });
+      });
+      contenedor.querySelector('[data-testid="btn-vaciar"]').addEventListener('click', () => { vaciarCarrito(); pintarCarrito(); });
+      contenedor.querySelector('[data-testid="btn-confirmar"]').addEventListener('click', confirmarPedido);
+    }
+
+    async function confirmarPedido() {
+      const items = leerCarrito();
+      const mensajeEl = document.getElementById('mensaje-pedido');
+      // Confirma un pedido por cada item (la API acepta uno a la vez).
+      try {
+        for (const item of items) {
+          const res = await fetch('/api/pedidos', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ productoId: item.id, cliente: 'cliente@tienda.demo', cantidad: item.cantidad }),
+          });
+          if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.error || 'Error al confirmar');
+          }
+        }
+        vaciarCarrito();
+        pintarCarrito();
+        mensajeEl.innerHTML = '<div class="mensaje mensaje-ok" data-testid="pedido-confirmado">Pedido confirmado. Gracias por tu compra.</div>';
+      } catch (e) {
+        mensajeEl.innerHTML = '<div class="mensaje mensaje-error" data-testid="pedido-error">No se pudo confirmar: ' + e.message + '</div>';
+      }
+    }
+
+    actualizarContadorCarrito();
+    pintarCarrito();
+  </script>
+</body>
+</html>
