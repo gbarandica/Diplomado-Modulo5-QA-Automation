@@ -1,0 +1,20 @@
+# Node
+node_modules/
+app-tienda/datos/db.json
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Playwright
+test-results/
+playwright-report/
+.cache/
+# Resultados de pruebas (JUnit) publicados por el pipeline
+resultados/
+# Allure (se generan en cada corrida; los publica el pipeline como artefacto)
+allure-results/
+allure-report/

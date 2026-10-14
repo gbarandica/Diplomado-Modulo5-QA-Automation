@@ -7,7 +7,8 @@ Feature: Filtrar el catalogo por categoria
   quiero filtrar los productos por categoria
   para encontrar mas rapido lo que busco
 
-  @catalogo @smoke
+  # @TC20 = ID del Test Case en Azure Test Plans (enlaza el resultado al caso).
+  @catalogo @smoke @TC20
   Scenario: Filtrar productos por categoria Hogar
     Given que abro la home de la tienda
     When filtro el catalogo por la categoria "hogar"

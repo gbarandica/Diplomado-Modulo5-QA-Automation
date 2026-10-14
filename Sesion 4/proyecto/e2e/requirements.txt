@@ -11,3 +11,7 @@ pytest-playwright==0.5.2
 Faker==30.3.0
 # requests: pequeñas verificaciones contra la API (health, seed)
 requests==2.32.3
+# ── Reporte Allure ─────────────────────────────────────────────────
+# allure-pytest-bdd: convierte cada escenario Gherkin en pasos visuales
+# en el reporte Allure, y permite adjuntar capturas, HTML, video y trace.
+allure-pytest-bdd==2.13.5

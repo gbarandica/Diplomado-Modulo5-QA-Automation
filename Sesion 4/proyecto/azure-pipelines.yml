@@ -1,0 +1,260 @@
+# ══════════════════════════════════════════════════════════════════
+#  azure-pipelines.yml — Pipeline UNICO "todo en un job" (Dia 4)
+#  UN SOLO REPO: el del Dia 3 (ProyectoTienda) + la carpeta e2e/ que agregas.
+# ------------------------------------------------------------------
+#  Este archivo va en la RAIZ del repo ProyectoTienda, al lado del
+#  azure-pipelines.yml del Dia 3 (dale otro nombre si quieres conservar ambos,
+#  ej. azure-pipelines-e2e.yml, y crea un pipeline nuevo que apunte a el).
+#
+#  ESTRUCTURA ESPERADA del repo (confirmada en el agente):
+#      ProyectoTienda/
+#      ├─ prerequisito/app-tienda/   <- la app (servidor/server.js, datos/)
+#      ├─ tienda-azure/              <- tests sencillos: smoke + carga
+#      └─ e2e/                       <- automatizacion E2E (lo que AGREGAS):
+#                                       features/, screenplay/, tests/, conftest.py,
+#                                       requirements.txt, pytest.ini
+#
+#  POR QUE "TODO EN UN JOB": cada stage/job corre en un agente efimero. Si
+#  arrancas la app en un stage, al terminar ese stage la app MUERE. Por eso
+#  arrancamos la app con `&` y corremos smoke + carga + E2E en el MISMO job,
+#  mientras la app sigue viva. Al terminar el job, todo muere junto.
+#
+#  Al ser UN SOLO repo, NO hace falta 'resources: repositories' ni dos checkout.
+# ══════════════════════════════════════════════════════════════════
+
+trigger:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  NODE_VERSION: '20.x'
+  PYTHON_VERSION: '3.11'
+  BASE_URL: 'http://localhost:3000'
+  # Rutas relativas a la raiz del repo (NO llevan prefijo de repo: es un solo repo).
+  APP_DIR:  'prerequisito/app-tienda'   # carpeta de la app (Dia 3)
+  SMOKE_DIR: 'tienda-azure'             # carpeta de smoke + carga (Dia 3)
+  E2E_DIR:  'e2e'                        # carpeta que AGREGAS con la automatizacion
+  # ── Azure Test Plans (para actualizar los Test Points) ──────────
+  # AJUSTA estos dos IDs a TU plan/suite (los ves en la URL de Test Plans:
+  #   .../_testPlans/execute?planId=XX&suiteId=YY).
+  # El PAT NO va aqui: definelo como variable SECRETA del pipeline (ver nota
+  # al final del archivo) con el nombre AZURE_DEVOPS_PAT.
+  TEST_PLAN_ID:  '14'    # ID del Test Plan 'Tienda v1 - Regresion'
+  TEST_SUITE_ID: '18'    # ID del Suite dentro del plan
+
+stages:
+  - stage: CI_E2E
+    displayName: 'CI + E2E en un solo job (app viva todo el job)'
+    jobs:
+      - job: todo_en_uno
+        displayName: 'Build -> App -> Smoke -> Carga -> E2E -> Evidencia'
+        steps:
+          # 1) Traer el repo (uno solo)
+          - checkout: self
+
+          # 2) Preparar Node y Python
+          - task: NodeTool@0
+            displayName: 'Usar Node $(NODE_VERSION)'
+            inputs: { versionSpec: '$(NODE_VERSION)' }
+          - task: UsePythonVersion@0
+            displayName: 'Usar Python $(PYTHON_VERSION)'
+            inputs: { versionSpec: '$(PYTHON_VERSION)' }
+
+          # 3) BUILD: instalar la app y generar datos con Faker (postinstall)
+          - script: npm install
+            displayName: 'Build — npm install (genera datos con Faker)'
+            workingDirectory: '$(APP_DIR)'
+
+          # 4) Arrancar la app en segundo plano (&): queda VIVA todo el job
+          - script: |
+              node servidor/server.js &
+              echo "Esperando a que la app responda..."
+              for i in $(seq 1 20); do
+                if curl -sf http://localhost:3000/api/health > /dev/null; then
+                  echo "App lista"; break
+                fi
+                sleep 2
+              done
+            displayName: 'Arrancar la app en background (queda viva)'
+            workingDirectory: '$(APP_DIR)'
+
+          # 5) SMOKE: la app responde lo esencial (misma app viva)
+          - script: BASE_URL=$(BASE_URL) node tests/smoke-api.js
+            displayName: 'Smoke test de la API'
+            workingDirectory: '$(SMOKE_DIR)'
+
+          # 6) CARGA: quality gate de rendimiento (sale 1 si no cumple el SLA)
+          - script: BASE_URL=$(BASE_URL) CONCURRENCIA=15 DURACION_S=8 node tests/carga-simple.js
+            displayName: 'Prueba de carga (falla si no cumple el SLA)'
+            workingDirectory: '$(SMOKE_DIR)'
+
+          # 7) AUTOMATIZACION E2E: pytest-bdd contra la misma app viva
+          #    - mkdir -p resultados : garantiza que la carpeta exista.
+          #    - pytest ... | tee    : muestra la salida en el log Y la guarda.
+          #    - exit ${PIPESTATUS[0]}: conserva el codigo real de pytest (no el de tee),
+          #      para que el paso falle si hay tests en rojo, PERO el junit ya quedo escrito.
+          - script: |
+              set -e
+              mkdir -p resultados
+              pip install -r requirements.txt
+              python -m playwright install --with-deps chromium
+              set +e
+              pytest --junitxml=resultados/junit.xml -o junit_family=xunit2 | tee resultados/pytest-salida.txt
+              CODIGO=${PIPESTATUS[0]}
+              echo "pytest termino con codigo $CODIGO"
+              ls -la resultados
+              exit $CODIGO
+            displayName: 'Automatizacion E2E (pytest-bdd)'
+            workingDirectory: '$(E2E_DIR)'
+            env:
+              BASE_URL: $(BASE_URL)
+
+          # 8) EVIDENCIA (JUnit) en el propio run — SIEMPRE corre (always()),
+          #    incluso si el paso 7 fallo, para que los tests en rojo tambien
+          #    aparezcan en la pestana Tests.
+          #    El JUnit incluye en cada <testcase> una <property name="test_case_id">
+          #    (viene del tag @TC<id> del escenario Gherkin). Azure usa ese ID para
+          #    enlazar el resultado automatizado con el Test Case de Azure Test Plans.
+          - task: PublishTestResults@2
+            condition: always()
+            displayName: 'Publicar resultados (JUnit) — pestana Tests + Test Cases'
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: '**/junit.xml'
+              searchFolder: '$(System.DefaultWorkingDirectory)/$(E2E_DIR)/resultados'
+              testRunTitle: 'E2E Tienda - Dia 4'
+              failTaskOnFailedTests: false
+              publishRunAttachments: true
+
+          # 8b) ACTUALIZAR LOS TEST POINTS del Test Plan (pestana Execute).
+          #     PublishTestResults@2 deja el resultado en el "Test Run" del
+          #     pipeline, pero NO cambia el Test Point del plan. Este paso llama
+          #     a la REST API de Azure Test para mover cada Test Case a
+          #     Passed/Failed en el plan, usando el test_case_id del junit.
+          #     Solo corre si definiste TEST_PLAN_ID y TEST_SUITE_ID.
+          - script: |
+              if [ -z "$TEST_PLAN_ID" ] || [ -z "$TEST_SUITE_ID" ] || [ -z "$AZURE_DEVOPS_PAT" ]; then
+                echo "Falta TEST_PLAN_ID / TEST_SUITE_ID / AZURE_DEVOPS_PAT: me salto la actualizacion del Test Plan."
+                echo "(El resultado igual quedo en la pestana Tests del run.)"
+                exit 0
+              fi
+              # No tumbamos el pipeline si la publicacion al plan falla (es
+              # evidencia complementaria). El resultado ya esta en la pestana Tests.
+              python tools/publicar_test_plan.py || echo "[AVISO] No se pudo actualizar el Test Plan (revisa IDs/PAT); el run si tiene los resultados."
+            displayName: 'Actualizar Test Points del Test Plan (pestana Execute)'
+            condition: always()
+            workingDirectory: '$(E2E_DIR)'
+            env:
+              AZURE_DEVOPS_PAT: $(AZURE_DEVOPS_PAT)   # <-- secret del pipeline
+              TEST_PLAN_ID: $(TEST_PLAN_ID)           # <-- variable del pipeline (o del bloque variables)
+              TEST_SUITE_ID: $(TEST_SUITE_ID)         # <-- variable del pipeline (o del bloque variables)
+              JUNIT_PATH: 'resultados/junit.xml'
+
+          # 9) REPORTE ALLURE: convierte allure-results (capturas por paso,
+          #    video y trace que adjunta el conftest) en un reporte HTML navegable.
+          #    Se instala el Allure CLI (necesita Java, ya viene en ubuntu-latest).
+          #    Se generan DOS formatos:
+          #      a) allure-report/            : reporte normal (varios archivos)
+          #      b) allure-single/index.html  : UN SOLO html autocontenido que se
+          #         abre con doble clic desde file:// (sin servidor, sin CORS).
+          - script: |
+              set -e
+              echo "Instalando Allure CLI..."
+              curl -sL -o allure.tgz https://github.com/allure-framework/allure2/releases/download/2.30.0/allure-2.30.0.tgz
+              tar -zxf allure.tgz
+              export PATH="$PWD/allure-2.30.0/bin:$PATH"
+              echo "Generando reporte Allure (normal)..."
+              allure generate allure-results -o allure-report --clean
+              echo "Generando reporte Allure (single-file: un unico index.html)..."
+              allure generate allure-results -o allure-single --clean --single-file
+              ls -la allure-single
+            displayName: 'Generar reporte Allure (normal + single-file)'
+            condition: always()
+            workingDirectory: '$(E2E_DIR)'
+
+          # 10) ARTEFACTOS descargables del run:
+          #     - allure-report-html : UN SOLO index.html autocontenido -> lo
+          #       descargas y lo abres con doble clic (no necesita servidor).
+          #     - allure-report      : el reporte completo (por si lo quieres servir).
+          #     - evidencia-e2e      : junit, video .webm, trace .zip.
+          - task: PublishPipelineArtifact@1
+            condition: always()
+            displayName: 'Adjuntar reporte Allure (UN SOLO html, abrible directo)'
+            inputs:
+              targetPath: '$(E2E_DIR)/allure-single'
+              artifact: 'allure-report-html'
+          - task: PublishPipelineArtifact@1
+            condition: always()
+            displayName: 'Adjuntar reporte Allure completo'
+            inputs:
+              targetPath: '$(E2E_DIR)/allure-report'
+              artifact: 'allure-report'
+          - task: PublishPipelineArtifact@1
+            condition: always()
+            displayName: 'Adjuntar evidencia (junit, video, trace)'
+            inputs:
+              targetPath: '$(E2E_DIR)/resultados'
+              artifact: 'evidencia-e2e'
+
+          # 11) (OPCIONAL) Reporte Allure como PESTANA dentro del run, sin descargar.
+          #     Requiere instalar en tu organizacion la extension gratuita
+          #     "Allure Test Reports" (Marketplace). Si la instalas, descomenta
+          #     este bloque: anadira una pestana "Allure" al run con el reporte
+          #     embebido, que se ve sin bajar ningun archivo.
+          # - task: PublishAllureReport@1
+          #   condition: always()
+          #   displayName: 'Publicar Allure como pestana del run'
+          #   inputs:
+          #     reportDir: '$(E2E_DIR)/allure-report'
+
+# ══════════════════════════════════════════════════════════════════
+#  COMO VER LAS EVIDENCIAS en Azure DevOps, al terminar el run:
+#    - Pestana "Tests" del run         : los 4 escenarios Pass/Fail (JUnit).
+#    - Artefacto "allure-report-html"  : UN SOLO index.html -> lo descargas y lo
+#      abres con DOBLE CLIC (autocontenido, no necesita servidor ni internet).
+#    - Artefacto "allure-report"       : reporte completo (para servir con
+#      `allure open allure-report` o publicar en una URL).
+#    - Artefacto "evidencia-e2e"       : junit.xml, videos .webm, trace .zip
+#      (el trace se abre con: npx playwright show-trace trace-ultimo.zip).
+#    - Pestana "Allure" (opcional)     : si instalas la extension del paso 11,
+#      el reporte se ve EMBEBIDO en el run, sin descargar nada.
+#
+#  QUE AJUSTAR (si tu repo usa otros nombres de carpeta):
+#    - APP_DIR   : donde esta servidor/server.js de la app
+#    - SMOKE_DIR : donde estan tests/smoke-api.js y tests/carga-simple.js
+#    - E2E_DIR   : la carpeta que agregaste con la automatizacion (features, pytest, requirements.txt)
+#
+#  CLAVE: los pasos 3-8 estan en el MISMO job (todo_en_uno). La app arrancada en
+#  el paso 4 sigue viva en 5, 6 y 7. Al terminar el job, el agente (y la app)
+#  se destruyen juntos. En stages separados la app NO sobreviviria.
+# ══════════════════════════════════════════════════════════════════
+#
+#  ACTUALIZAR LOS TEST POINTS DEL TEST PLAN (paso 8b) — CONFIGURACION:
+#
+#  1) IDs del plan y el suite (arriba, en 'variables'):
+#       TEST_PLAN_ID  : abre Test Plans y mira la URL:
+#                       .../_testPlans/execute?planId=XX&suiteId=YY
+#                       XX es el plan, YY es el suite.
+#       TEST_SUITE_ID : el YY de esa URL (en tu captura, "Carrito (ID: 17)" -> 17).
+#
+#  2) PAT (token) como variable SECRETA del pipeline (NO en el YAML):
+#       a. Azure DevOps (arriba a la derecha) -> User settings ->
+#          Personal Access Tokens -> New Token.
+#       b. Scopes: 'Test Management (Read & write)' (o Full access para la demo).
+#       c. Copia el token.
+#       d. En el pipeline: Edit -> Variables -> New variable:
+#            Name  = AZURE_DEVOPS_PAT
+#            Value = <el token>
+#            marca "Keep this value secret".
+#
+#  3) Los escenarios deben tener el tag @TC<id> con el ID REAL del Test Case
+#     (ej. @TC19). Solo esos se publican en el plan; los que no tienen tag se
+#     ignoran (quedan igual en la pestana Tests del run).
+#
+#  Si TEST_PLAN_ID / TEST_SUITE_ID o el PAT faltan, el paso 8b se salta sin
+#  romper el pipeline: el resultado igual queda en la pestana Tests del run.
+# ══════════════════════════════════════════════════════════════════
